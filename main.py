@@ -1,3 +1,4 @@
+import ast
 import csv
 import os
 
@@ -18,11 +19,15 @@ conn_string = f"host={host} port={port} dbname={dbname} user={user} password={pa
 getAllTableQueries = """SELECT table_name FROM information_schema.tables
        WHERE table_schema = 'public';"""
 getAllDatabaseQuery = """SELECT datname FROM pg_database;"""
-headerCsv = ["Table Name", "Missing Primary Keys?", "Table Size", "Collations", "Schema"]
+headerCsv = ["Table Name", "Missing Primary Keys?", "Table Size", "Collations", "schemaName", "tableName", "tableOwner",
+             "tableSpace", "hasIndexes", "hasRules", "hasTriggers", "rowSecurity"]
+
 validTableHeader = ['TableName', 'Size']
 validDatabaseList = []
 invalidDatabaseList = ['template1', 'template0', 'azure_maintenance', 'azure_sys']
-invalidDataTypes = ['integer']
+invalidDataTypes = ['timescale']
+validDbHeader = ['DB Name', 'DB Size']
+migratableDatabaseList = []
 
 # Connecting to the DB from the string used and gathering all tables
 conn = psycopg2.connect(conn_string)
@@ -42,6 +47,32 @@ def connectToServer(dbName):
     return db_conn.cursor()
 
 
+def createFolder(title):
+    current_directory = os.getcwd()
+    final_directory = os.path.join(current_directory, title)
+    if not os.path.exists(final_directory):
+        os.makedirs(final_directory)
+
+
+def writeCsv(header, rows, title):
+    with open(title, 'w', newline='', encoding='UTF8') as file:
+        writer = csv.writer(file)
+        writer.writerow(header)
+        writer.writerows(rows)
+
+
+def writeErrorTxt(currentDb, errorRows):
+    if len(errorRows) > 0:
+        textfile = open("Errors/" + currentDb + "ERRORS.txt", "w")
+        for element in errorRows:
+            textfile.write(str(element[0]) + "\n")
+        isValidDatabase = False
+        textfile.close()
+    else:
+        isValidDatabase = True
+    return isValidDatabase
+
+
 def processDatabase(cursor, currentDb):
     db_cursor = cursor
     db_cursor.execute(getAllTableQueries)
@@ -51,6 +82,8 @@ def processDatabase(cursor, currentDb):
     validTableList = []
     invalidTableList = ['pg_buffercache', 'pg_stat_statements']
     errorRows = []
+    databaseSize = None
+    isValidDatabase = False
 
     for table in tableList:
         if not table[0] in invalidTableList:
@@ -76,13 +109,15 @@ def processDatabase(cursor, currentDb):
         from information_schema.columns where collation_name is not null order by table_schema, table_name, 
         ordinal_position;"""
 
-        getSchemaQuery = """SELECT * FROM pg_catalog.pg_tables WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';"""
+        getSchemaQuery = f"""SELECT * FROM pg_catalog.pg_tables WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema' AND tablename = '{table}';"""
         getDataTypeColumns = f"""SELECT column_name, data_type FROM information_schema.columns WHERE 
 table_name = '{table}';"""
 
+        getDatabaseSizeQuery = f"select pg_size_pretty(pg_database_size('{currentDb}'));"
+
         # Done: Add schema to output
         # Done: Exclude extension names
-        # TODO: Check listings, triggers, views
+        # Done: Check listings, triggers, views
         # Done: Add checking databases under a server
         # Done: Remove  ('template1',), ('template0',), ('azure_maintenance',), ('azure_sys',) as databases
 
@@ -97,6 +132,8 @@ table_name = '{table}';"""
         schema = db_cursor.fetchall()
         db_cursor.execute(getDataTypeColumns)
         columns = db_cursor.fetchall()
+        db_cursor.execute(getDatabaseSizeQuery)
+        databaseSize = db_cursor.fetchall()
 
         # For every column and data type, if we haven't seen that data type, record it and the column its associated
         # with
@@ -108,7 +145,12 @@ table_name = '{table}';"""
         # Record results to be written to 3 CSV files
 
         # Record data for the report CSV
-        newCsvLine = [table, primaryKeyCount == 0, tableSize[0][0], collations, schema]
+        newCsvLine = [table, primaryKeyCount == 0, tableSize[0][0], collations]
+
+        print(schema)
+        for item in schema[0]:
+            newCsvLine.append(item)
+
         reportRows.append(newCsvLine)
 
         # If we have at least one primary key, the table is valid, otherwise that is a fatal error we will write to the
@@ -128,36 +170,25 @@ table_name = '{table}';"""
                      f" '{columnToTypeDict[invalidDataType]}'"]
                 )
 
-    def createFolder(title):
-        current_directory = os.getcwd()
-        final_directory = os.path.join(current_directory, title)
-        if not os.path.exists(final_directory):
-            os.makedirs(final_directory)
-
-    def writeCsv(header, rows, title):
-        with open(title, 'w', newline='', encoding='UTF8') as file:
-            writer = csv.writer(file)
-            writer.writerow(header)
-            writer.writerows(rows)
-
-    def writeErrorTxt():
-        textfile = open("Errors/" + currentDb + "ERRORS.txt", "w")
-
-        if len(errorRows) > 0:
-            for element in errorRows:
-                textfile.write(str(element[0]) + "\n")
-        else:
-            textfile.write("No errors to report, everything is ready for migration pending further review \n")
-        textfile.close()
-
     createFolder('Analysis')
     createFolder('ValidTables')
     createFolder('Errors')
+    createFolder('ValidDatabases')
     writeCsv(headerCsv, reportRows, "Analysis/" + currentDb + "analysis.csv")
     writeCsv(validTableHeader, validTableRows, "ValidTables/" + currentDb + "validTables.csv")
-    writeErrorTxt()
+    isValidDatabase = writeErrorTxt(currentDb, errorRows)
+
+    if not databaseSize is None:
+        databaseSize = databaseSize[0][0]
+    else:
+        databaseSize = 0
+
+    if isValidDatabase:
+        migratableDatabaseList.append([currentDb, databaseSize])
 
 
 for database in validDatabaseList:
     cursor = connectToServer(database)
     processDatabase(cursor, database)
+
+writeCsv(validDbHeader, migratableDatabaseList, "ValidDatabases/validDatabases.csv")
