@@ -1,0 +1,2 @@
+﻿host,port,dbname,user,password
+flexy-test-sspg.postgres.database.azure.com,5432,postgres,flexy@flexy-test-sspg,secureP@$$word
