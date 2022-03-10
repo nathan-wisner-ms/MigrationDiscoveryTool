@@ -1,6 +1,6 @@
 # Instructions
 
-* Fill out ```config.ini``` with information about the database. You can get all the data from the azure portal and look in the Connection String for psql
+* Fill out ```databaseDetails.csv``` with information about the databases. You can get all the data from the azure portal and look in the Connection String for psql
 * Using **Python 3.8**, either in a terminal using ```python main.py``` or ```python3 main.py```
 * After this, 4 folders should be created, and their files will be in the format of {DBNAME}{FILETYPE}. E.g: pgValidTables.csv for the database pg
     * Errors
